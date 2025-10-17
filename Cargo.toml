@@ -1,0 +1,12 @@
+[package]
+name = "pentagon"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+base64 = "0.22.1"
+hakoniwa = { version = "1.2.2", features = ["landlock", "seccomp"] }
+libc = "0.2.177"
+redis = "0.32.7"
+serde = "1.0.228"
+serde_json = "1.0.145"

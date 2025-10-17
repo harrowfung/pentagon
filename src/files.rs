@@ -1,0 +1,72 @@
+use crate::types::FilePath;
+use redis::{Commands, Connection};
+use std::fs;
+
+pub struct FileManager {
+    connection: Box<Connection>,
+}
+
+impl FileManager {
+    pub fn new(connection: Box<Connection>) -> Self {
+        FileManager { connection }
+    }
+
+    pub fn save_file(
+        &mut self,
+        file_path: FilePath,
+        base_path: Option<String>,
+        content: Vec<u8>,
+    ) -> Result<(), String> {
+        match file_path {
+            FilePath::Remote { id } => {
+                let _: () = self
+                    .connection
+                    .set(id, content)
+                    .map_err(|e| format!("Failed to save remote file: {}", e))?;
+                Ok(())
+            }
+
+            FilePath::Local { name } => {
+                let full_path = if let Some(base) = base_path {
+                    format!("{}/{}", base, name)
+                } else {
+                    name
+                };
+                fs::write(full_path, content)
+                    .map_err(|e| format!("Failed to write local file: {}", e))?;
+                Ok(())
+            }
+
+            _ => Err("Unsupported file path type for saving".to_string()),
+        }
+    }
+
+    pub fn get_file(
+        &mut self,
+        file: FilePath,
+        base_path: Option<String>,
+    ) -> Result<Vec<u8>, String> {
+        match file {
+            FilePath::Local { name } => {
+                let full_path = if let Some(base) = base_path {
+                    format!("{}/{}", base, name)
+                } else {
+                    name
+                };
+                let data =
+                    fs::read(full_path).map_err(|e| format!("Failed to read local file: {}", e))?;
+                Ok(data)
+            }
+
+            FilePath::Remote { id } => {
+                let data: Vec<u8> = self
+                    .connection
+                    .get(id)
+                    .map_err(|e| format!("Failed to get remote file: {}", e))?;
+                Ok(data)
+            }
+
+            _ => Err("Unsupported file path type".to_string()),
+        }
+    }
+}

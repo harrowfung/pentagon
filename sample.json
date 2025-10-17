@@ -1,0 +1,47 @@
+{
+    "executions": [
+        {
+            "program": "/usr/bin/python3",
+            "args": ["-c", "a = int(input())\nprint(a ** a)"],
+            "time_limit": 1,
+            "wall_time_limit": 2,
+            "memory_limit": 268435456,
+            "copy_out": [
+                {
+                    "from": { "type": "stdout" },
+                    "to": { "type": "tmp", "id": 1 }
+                }
+            ],
+            "copy_in": [
+                {
+                    "from": { "type": "remote", "id": "input" },
+                    "to": { "type": "stdin" }
+                }
+            ],
+            "return_files": [{ "type": "stderr" }],
+            "die_on_error": true
+        },
+        {
+            "program": "/usr/bin/python3",
+            "args": ["-c", "print(\"answer:\", input())"],
+            "time_limit": 1,
+            "wall_time_limit": 2,
+            "memory_limit": 268435456,
+            "copy_out": [
+                {
+                    "from": { "type": "stdout" },
+                    "to": { "type": "remote", "id": "output" }
+                }
+            ],
+            "copy_in": [
+                {
+                    "from": { "type": "tmp", "id": 1 },
+                    "to": { "type": "stdin" }
+                }
+            ],
+            "return_files": [],
+            "die_on_error": true
+        }
+    ],
+    "files": [{ "type": "remote", "name": "candle.h", "id": "X002-candle.h" }]
+}
