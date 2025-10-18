@@ -1,17 +1,28 @@
 use crate::types::FilePath;
-use redis::{Commands, Connection};
+use redis::{AsyncCommands, aio::MultiplexedConnection};
 use std::fs;
 
 pub struct FileManager {
-    connection: Box<Connection>,
+    connection: MultiplexedConnection,
 }
 
-impl FileManager {
-    pub fn new(connection: Box<Connection>) -> Self {
-        FileManager { connection }
-    }
+pub trait FileManagerTrait {
+    async fn save_file(
+        &mut self,
+        file_path: FilePath,
+        base_path: Option<String>,
+        content: Vec<u8>,
+    ) -> Result<(), String>;
 
-    pub fn save_file(
+    async fn get_file(
+        &mut self,
+        file: FilePath,
+        base_path: Option<String>,
+    ) -> Result<Vec<u8>, String>;
+}
+
+impl FileManagerTrait for FileManager {
+    async fn save_file(
         &mut self,
         file_path: FilePath,
         base_path: Option<String>,
@@ -22,6 +33,7 @@ impl FileManager {
                 let _: () = self
                     .connection
                     .set(id, content)
+                    .await
                     .map_err(|e| format!("Failed to save remote file: {}", e))?;
                 Ok(())
             }
@@ -41,7 +53,7 @@ impl FileManager {
         }
     }
 
-    pub fn get_file(
+    async fn get_file(
         &mut self,
         file: FilePath,
         base_path: Option<String>,
@@ -62,11 +74,18 @@ impl FileManager {
                 let data: Vec<u8> = self
                     .connection
                     .get(id)
+                    .await
                     .map_err(|e| format!("Failed to get remote file: {}", e))?;
                 Ok(data)
             }
 
             _ => Err("Unsupported file path type".to_string()),
         }
+    }
+}
+
+impl FileManager {
+    pub fn new(connection: MultiplexedConnection) -> Self {
+        FileManager { connection }
     }
 }

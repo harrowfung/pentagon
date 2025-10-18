@@ -1,0 +1,3 @@
+redis_url = "redis://localhost:6379"
+port = 3000
+base_code_path = "/tmp/pentagon"

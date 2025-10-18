@@ -1,85 +1,106 @@
-use redis::Client;
-
 use crate::{
     files::FileManager,
-    types::{Execution, ExecutionRequest, ExecutionTransfer, File, FilePath},
+    types::{ExecutionRequest, ExecutionResult},
     worker::Worker,
 };
+use axum::{Json, Router, extract::State, http::StatusCode, routing::post};
+use config::Config;
+use dotenvy::dotenv;
+use redis::aio::MultiplexedConnection;
 
 mod files;
 mod types;
 mod worker;
 
-fn main() {
-    let client = Client::open("redis://localhost:6379/").expect("unable to connect to redis");
-    let con = client
-        .get_connection()
-        .expect("unable to get redis connection");
+#[derive(Debug, Default, serde::Deserialize, PartialEq, Eq)]
+struct AppConfig {
+    redis_url: String,
+    base_code_path: String,
+    port: u16,
+}
 
-    let file_manager = Box::new(FileManager::new(Box::new(con)));
-    let mut worker = Worker::new("/tmp/code-runner".to_string(), file_manager);
+#[derive(Clone)]
+struct AppState {
+    // file_manager: Box<dyn FileManagerTrait + Send + Sync>,
+    redis_connection: MultiplexedConnection,
+    base_code_path: String,
+}
 
-    let sample_requests: ExecutionRequest = ExecutionRequest {
-        executions: vec![
-            Execution {
-                program: "/usr/bin/python3".to_string(),
-                args: vec![
-                    "-c".to_string(),
-                    "a = int(input())\nprint(a ** a)".to_string(),
-                ],
-                time_limit: 1,
-                memory_limit: 256 * 1024 * 1024,
-                wall_time_limit: 2,
-                copy_in: vec![ExecutionTransfer {
-                    from: FilePath::Remote {
-                        id: "input".to_string(),
-                    },
-                    to: FilePath::Stdin {},
-                }],
-                copy_out: vec![ExecutionTransfer {
-                    from: FilePath::Stdout {},
-                    to: FilePath::Tmp { id: 1 },
-                }],
-                return_files: vec![FilePath::Stderr {}],
-                die_on_error: true,
-            },
-            Execution {
-                program: "/usr/bin/python3".to_string(),
-                args: vec!["-c".to_string(), "print(\"answer:\", input())".to_string()],
-                time_limit: 1,
-                memory_limit: 256 * 1024 * 1024,
-                wall_time_limit: 2,
-                copy_in: vec![ExecutionTransfer {
-                    from: FilePath::Tmp { id: 1 },
-                    to: FilePath::Stdin {},
-                }],
-                copy_out: vec![ExecutionTransfer {
-                    from: FilePath::Stdout {},
-                    to: FilePath::Remote {
-                        id: "output".to_string(),
-                    },
-                }],
-                return_files: vec![],
-                die_on_error: true,
-            },
-        ],
-        files: vec![File::Remote {
-            name: "candle.h".to_string(),
-            id: "X002-candle.h".to_string(),
-        }],
-    };
+fn gen_random_id(length: u32) -> String {
+    let id: String = Vec::from_iter(
+        (0..length)
+            .map(|_| {
+                let idx = fastrand::usize(0..36);
+                char::from_digit(idx as u32, 36).unwrap()
+            })
+            .collect::<Vec<char>>(),
+    )
+    .into_iter()
+    .collect();
 
-    // serealize the request
-    let serialized = serde_json::to_string(&sample_requests).unwrap();
-    // store at sample.json
-    std::fs::write("sample.json", &serialized).unwrap();
+    id
+}
 
-    for file in sample_requests.files {
-        worker.write_file(file).unwrap();
+async fn execute_code(
+    State(state): State<AppState>,
+    Json(payload): Json<ExecutionRequest>,
+) -> Result<Json<Vec<ExecutionResult>>, (StatusCode, String)> {
+    let mut worker = Worker::new(
+        format!("{}/{}", state.base_code_path, gen_random_id(10)),
+        Box::new(FileManager::new(state.redis_connection)),
+    );
+    for file in payload.files {
+        worker.write_file(file).await.map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Failed to write file: {}", e),
+            )
+        })?;
     }
 
-    for request in sample_requests.executions {
-        let result = worker.execute(request).unwrap();
-        dbg!("Execution result: {:?}", result);
+    let mut results = Vec::new();
+
+    for request in payload.executions {
+        let result = worker.execute(request).await.unwrap();
+        results.push(result);
     }
+
+    Ok(Json(results))
+}
+
+#[tokio::main]
+async fn main() {
+    tracing_subscriber::fmt::init();
+
+    dotenv().ok();
+    let settings = Config::builder()
+        .add_source(config::File::with_name("Settings"))
+        .add_source(config::Environment::with_prefix("APP"))
+        .build()
+        .unwrap();
+
+    let app_config: AppConfig = settings.try_deserialize().unwrap();
+
+    let client = redis::Client::open(app_config.redis_url).unwrap();
+    let con = client.get_multiplexed_async_connection().await.unwrap();
+    let app = Router::new()
+        .route("/execute", post(execute_code))
+        .with_state(AppState {
+            // file_manager,
+            redis_connection: con,
+            base_code_path: app_config.base_code_path.clone(),
+        });
+
+    let listener = tokio::net::TcpListener::bind(format!("127.0.0.1:{}", app_config.port))
+        .await
+        .unwrap();
+
+    tracing::info!("listening on {}", listener.local_addr().unwrap());
+    axum::serve(listener, app).await.unwrap();
+
+    // let mut worker = Worker::new("/tmp/code-runner".to_string(), file_manager);
+
+    // for file in sample_requests.files {
+    //     worker.write_file(file).unwrap();
+    // }
 }

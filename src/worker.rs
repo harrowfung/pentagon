@@ -1,3 +1,5 @@
+use crate::files::FileManagerTrait;
+
 use std::collections::HashMap;
 use std::fs;
 use std::io::{Read, Write};
@@ -63,7 +65,7 @@ impl Worker {
         self.temp_files.insert(id, data);
     }
 
-    pub fn write_file(&mut self, file: File) -> Result<(), String> {
+    pub async fn write_file(&mut self, file: File) -> Result<(), String> {
         match file {
             File::Local { name, content } => {
                 let full_path = format!("{}/{}", self.path, name);
@@ -72,7 +74,10 @@ impl Worker {
             }
 
             File::Remote { id, name } => {
-                let data = self.file_manager.get_file(FilePath::Remote { id }, None)?;
+                let data = self
+                    .file_manager
+                    .get_file(FilePath::Remote { id }, None)
+                    .await?;
 
                 let full_path = format!("{}/{}", self.path, name);
                 let mut file = fs::File::create(&full_path).map_err(|e| e.to_string())?;
@@ -83,7 +88,10 @@ impl Worker {
         Ok(())
     }
 
-    pub fn execute(&mut self, execution: Execution) -> Result<ExecutionResult, ExecutionError> {
+    pub async fn execute(
+        &mut self,
+        execution: Execution,
+    ) -> Result<ExecutionResult, ExecutionError> {
         // initalization
         let mut stdin: Option<Vec<u8>> = None;
 
@@ -101,9 +109,9 @@ impl Worker {
                 FilePath::Remote { id } => self
                     .file_manager
                     .get_file(FilePath::Remote { id }, None)
+                    .await
                     .unwrap(),
-
-                FilePath::Tmp { id } => self.temp_files.remove(&id).unwrap(),
+                FilePath::Tmp { id } => self.temp_files.get(&id).unwrap().clone(),
 
                 _ => {
                     return Err(ExecutionError {
@@ -214,8 +222,6 @@ impl Worker {
             }
         };
 
-        dbg!(&resource, &proc_resource);
-
         for file in execution.copy_out {
             let data = match file.from {
                 FilePath::Stdout {} => output.stdout.clone(),
@@ -245,6 +251,7 @@ impl Worker {
                 FilePath::Remote { id } => {
                     self.file_manager
                         .save_file(FilePath::Remote { id }, None, data)
+                        .await
                         .unwrap();
                 }
                 _ => {
@@ -279,6 +286,7 @@ impl Worker {
                     let data = self
                         .file_manager
                         .get_file(FilePath::Remote { id: id.clone() }, None)
+                        .await
                         .unwrap();
 
                     return_files.push(ExecutionFile {
