@@ -1,12 +1,26 @@
+use std::convert::Infallible;
+
 use crate::{
     files::FileManager,
     types::{ExecutionRequest, ExecutionResult},
     worker::Worker,
 };
-use axum::{Json, Router, extract::State, http::StatusCode, routing::post};
+use async_stream::try_stream;
+use axum::{
+    Json, Router,
+    extract::State,
+    response::{
+        Sse,
+        sse::{Event, KeepAlive},
+    },
+    routing::post,
+};
 use config::Config;
 use dotenvy::dotenv;
+use futures_util::stream::Stream;
 use redis::aio::MultiplexedConnection;
+use serde_json::json;
+use tokio::sync::mpsc::{self, Sender};
 
 mod files;
 mod types;
@@ -41,10 +55,11 @@ fn gen_random_id(length: u32) -> String {
     id
 }
 
-async fn execute_code(
-    State(state): State<AppState>,
-    Json(payload): Json<ExecutionRequest>,
-) -> Result<Json<Vec<ExecutionResult>>, (StatusCode, String)> {
+async fn execute_code_inner(
+    state: AppState,
+    payload: ExecutionRequest,
+    tx: Sender<Result<ExecutionResult, String>>,
+) {
     let mut worker = Worker::new(
         format!("{}/{}", state.base_code_path, gen_random_id(10)),
         Box::new(FileManager::new(state.redis_connection)),
@@ -54,14 +69,12 @@ async fn execute_code(
             tracing::error!("error writing file: {}", e);
             worker.cleanup().await;
 
-            return Err((
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "Failed to write file".to_string(),
-            ));
+            let _ = tx.send(Err(format!("failed to write file: {}", e))).await;
+            return;
         }
     }
 
-    let mut results = Vec::new();
+    // let mut results = Vec::new();
 
     for request in payload.executions {
         let die_on_error = request.die_on_error;
@@ -72,16 +85,20 @@ async fn execute_code(
             tracing::error!("error executing code: {}", e.message);
             worker.cleanup().await;
 
-            return Err((
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("Failed to execute code: {}", e.message),
-            ));
+            // return Err((
+            //     StatusCode::INTERNAL_SERVER_ERROR,
+            //     format!("Failed to execute code: {}", e.message),
+            // ));
+            let _ = tx
+                .send(Err(format!("failed to execute code: {}", e.message)))
+                .await;
+            return;
         }
 
         let result = result.unwrap();
 
         let exit_code = result.exit_code.clone();
-        results.push(result);
+        let _ = tx.send(Ok(result)).await;
 
         if die_on_error && exit_code != 0 {
             break;
@@ -89,8 +106,40 @@ async fn execute_code(
     }
 
     worker.cleanup().await;
+}
 
-    Ok(Json(results))
+async fn execute_code(
+    State(state): State<AppState>,
+    Json(payload): Json<ExecutionRequest>,
+) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
+    let (tx, mut rx) = mpsc::channel::<Result<ExecutionResult, String>>(100);
+
+    tokio::spawn(async move {
+        let _ = execute_code_inner(state, payload, tx).await;
+    });
+
+    Sse::new(try_stream! {loop {
+        match rx.recv().await {
+            Some(data) => {
+                match data {
+                    Ok(json) => {
+                        yield Event::default().data(serde_json::to_string(&json).unwrap());
+                    },
+                    Err(err) => {
+                        tracing::error!("error executing code: {}", err);
+                        yield Event::default().data(json!(
+                            { "error": err }
+                        ).to_string());
+                    }
+                }
+            },
+
+            None => {
+                break;
+            }
+        }
+    }})
+    .keep_alive(KeepAlive::default())
 }
 
 #[tokio::main]
