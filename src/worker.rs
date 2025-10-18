@@ -228,9 +228,9 @@ impl Worker {
                 FilePath::Stderr {} => output.stderr.clone(),
                 FilePath::Local { name } => {
                     let full_path = format!("{}/{}", self.path, name);
-                    let mut f = fs::File::open(&full_path)
-                        .map_err(|e| e.to_string())
-                        .unwrap();
+                    let mut f = fs::File::open(&full_path).map_err(|e| ExecutionError {
+                        message: format!("failed to open {}: {}", &full_path, e),
+                    })?;
                     let mut buffer = Vec::new();
                     f.read_to_end(&mut buffer)
                         .map_err(|e| e.to_string())
@@ -254,6 +254,12 @@ impl Worker {
                         .await
                         .unwrap();
                 }
+
+                FilePath::Local { name } => {
+                    let mut f = fs::File::create(&name).map_err(|e| e.to_string()).unwrap();
+                    f.write_all(&data).map_err(|e| e.to_string()).unwrap();
+                }
+
                 _ => {
                     return Err(ExecutionError {
                         message: "Unsupported file path for copy_out".to_string(),
@@ -331,5 +337,9 @@ impl Worker {
             memory_used: proc_resource.vmrss as u64,
             return_files,
         })
+    }
+
+    pub async fn cleanup(&mut self) {
+        let _ = fs::remove_dir_all(&self.path);
     }
 }

@@ -50,20 +50,45 @@ async fn execute_code(
         Box::new(FileManager::new(state.redis_connection)),
     );
     for file in payload.files {
-        worker.write_file(file).await.map_err(|e| {
-            (
+        if let Err(e) = worker.write_file(file).await {
+            tracing::error!("error writing file: {}", e);
+            worker.cleanup().await;
+
+            return Err((
                 StatusCode::INTERNAL_SERVER_ERROR,
-                format!("Failed to write file: {}", e),
-            )
-        })?;
+                "Failed to write file".to_string(),
+            ));
+        }
     }
 
     let mut results = Vec::new();
 
     for request in payload.executions {
-        let result = worker.execute(request).await.unwrap();
+        let die_on_error = request.die_on_error;
+
+        let result = worker.execute(request).await;
+
+        if let Err(e) = &result {
+            tracing::error!("error executing code: {}", e.message);
+            worker.cleanup().await;
+
+            return Err((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Failed to execute code: {}", e.message),
+            ));
+        }
+
+        let result = result.unwrap();
+
+        let exit_code = result.exit_code.clone();
         results.push(result);
+
+        if die_on_error && exit_code != 0 {
+            break;
+        }
     }
+
+    worker.cleanup().await;
 
     Ok(Json(results))
 }
