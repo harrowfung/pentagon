@@ -3,7 +3,6 @@ use serde::{Deserialize, Serialize};
 #[derive(Serialize, Deserialize)]
 #[serde(tag = "type")]
 #[serde(rename_all = "lowercase")]
-
 pub enum File {
     Local { name: String, content: Vec<u8> },
     Remote { name: String, id: String },

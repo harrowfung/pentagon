@@ -222,48 +222,51 @@ impl Worker {
             }
         };
 
-        for file in execution.copy_out {
-            let data = match file.from {
-                FilePath::Stdout {} => output.stdout.clone(),
-                FilePath::Stderr {} => output.stderr.clone(),
-                FilePath::Local { name } => {
-                    let full_path = format!("{}/{}", self.path, name);
-                    let mut f = fs::File::open(&full_path).map_err(|e| ExecutionError {
-                        message: format!("failed to open {}: {}", &full_path, e),
-                    })?;
-                    let mut buffer = Vec::new();
-                    f.read_to_end(&mut buffer)
-                        .map_err(|e| e.to_string())
-                        .unwrap();
-                    buffer
-                }
-                _ => {
-                    return Err(ExecutionError {
-                        message: "Unsupported file path for copy_out".to_string(),
-                    });
-                }
-            };
+        if output.status.exit_code.unwrap_or(0) == 0 {
+            // only copy out files when process is successful
+            for file in execution.copy_out {
+                let data = match file.from {
+                    FilePath::Stdout {} => output.stdout.clone(),
+                    FilePath::Stderr {} => output.stderr.clone(),
+                    FilePath::Local { name } => {
+                        let full_path = format!("{}/{}", self.path, name);
+                        let mut f = fs::File::open(&full_path).map_err(|e| ExecutionError {
+                            message: format!("failed to open {}: {}", &full_path, e),
+                        })?;
+                        let mut buffer = Vec::new();
+                        f.read_to_end(&mut buffer)
+                            .map_err(|e| e.to_string())
+                            .unwrap();
+                        buffer
+                    }
+                    _ => {
+                        return Err(ExecutionError {
+                            message: "Unsupported file path for copy_out".to_string(),
+                        });
+                    }
+                };
 
-            match file.to {
-                FilePath::Tmp { id } => {
-                    self.store_temp_file(id, data);
-                }
-                FilePath::Remote { id } => {
-                    self.file_manager
-                        .save_file(FilePath::Remote { id }, None, data)
-                        .await
-                        .unwrap();
-                }
+                match file.to {
+                    FilePath::Tmp { id } => {
+                        self.store_temp_file(id, data);
+                    }
+                    FilePath::Remote { id } => {
+                        self.file_manager
+                            .save_file(FilePath::Remote { id }, None, data)
+                            .await
+                            .unwrap();
+                    }
 
-                FilePath::Local { name } => {
-                    let mut f = fs::File::create(&name).map_err(|e| e.to_string()).unwrap();
-                    f.write_all(&data).map_err(|e| e.to_string()).unwrap();
-                }
+                    FilePath::Local { name } => {
+                        let mut f = fs::File::create(&name).map_err(|e| e.to_string()).unwrap();
+                        f.write_all(&data).map_err(|e| e.to_string()).unwrap();
+                    }
 
-                _ => {
-                    return Err(ExecutionError {
-                        message: "Unsupported file path for copy_out".to_string(),
-                    });
+                    _ => {
+                        return Err(ExecutionError {
+                            message: "Unsupported file path for copy_out".to_string(),
+                        });
+                    }
                 }
             }
         }
