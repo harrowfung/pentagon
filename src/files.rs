@@ -38,14 +38,25 @@ impl FileManagerTrait for FileManager {
                 Ok(())
             }
 
-            FilePath::Local { name } => {
+            FilePath::Local { name, executable } => {
                 let full_path = if let Some(base) = base_path {
                     format!("{}/{}", base, name)
                 } else {
                     name
                 };
-                fs::write(full_path, content)
+                fs::write(full_path.clone(), content)
                     .map_err(|e| format!("Failed to write local file: {}", e))?;
+
+                if executable {
+                    let metadata = fs::metadata(&full_path)
+                        .map_err(|e| format!("Failed to get file metadata: {}", e))?;
+                    let mut permissions = metadata.permissions();
+
+                    use std::os::unix::fs::PermissionsExt;
+                    permissions.set_mode(0o755);
+                    fs::set_permissions(&full_path, permissions)
+                        .map_err(|e| format!("Failed to set executable permission: {}", e))?;
+                }
                 Ok(())
             }
 
@@ -59,7 +70,10 @@ impl FileManagerTrait for FileManager {
         base_path: Option<String>,
     ) -> Result<Vec<u8>, String> {
         match file {
-            FilePath::Local { name } => {
+            FilePath::Local {
+                name,
+                executable: _,
+            } => {
                 let full_path = if let Some(base) = base_path {
                     format!("{}/{}", base, name)
                 } else {

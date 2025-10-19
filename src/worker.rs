@@ -1,4 +1,5 @@
 use crate::files::FileManagerTrait;
+use std::os::unix::fs::PermissionsExt;
 
 use std::collections::HashMap;
 use std::fs;
@@ -8,6 +9,9 @@ use hakoniwa::seccomp::{Action, Arch, Filter};
 use hakoniwa::{Container, Namespace, Rlimit, Runctl, Stdio};
 
 use crate::files::FileManager;
+use metrics::histogram;
+use std::time::Instant;
+
 use crate::types::{Execution, ExecutionError, ExecutionFile, ExecutionResult, File, FilePath};
 
 pub struct Worker {
@@ -98,12 +102,24 @@ impl Worker {
         // copy files
         for file in execution.copy_in {
             let data = match file.from {
-                FilePath::Local { name } => {
+                FilePath::Local { name, executable } => {
                     let mut f = fs::File::open(&name).map_err(|e| e.to_string()).unwrap();
                     let mut buffer = Vec::new();
                     f.read_to_end(&mut buffer)
                         .map_err(|e| e.to_string())
                         .unwrap();
+
+                    // if executable is true, set the executable bit
+                    if executable {
+                        let mut perms = fs::metadata(&name)
+                            .map_err(|e| e.to_string())
+                            .unwrap()
+                            .permissions();
+                        perms.set_mode(perms.mode() | 0o111); // set executable bits
+                        fs::set_permissions(&name, perms)
+                            .map_err(|e| e.to_string())
+                            .unwrap();
+                    }
                     buffer
                 }
                 FilePath::Remote { id } => self
@@ -121,11 +137,23 @@ impl Worker {
             };
 
             match file.to {
-                FilePath::Local { name } => {
+                FilePath::Local { name, executable } => {
                     let full_path = format!("{}/{}", self.path, name);
                     let mut f = fs::File::create(&full_path)
                         .map_err(|e| e.to_string())
                         .unwrap();
+
+                    // if executable is true, set the executable bit
+                    if executable {
+                        let mut perms = fs::metadata(&full_path)
+                            .map_err(|e| e.to_string())
+                            .unwrap()
+                            .permissions();
+                        perms.set_mode(perms.mode() | 0o111); // set executable bits
+                        fs::set_permissions(&full_path, perms)
+                            .map_err(|e| e.to_string())
+                            .unwrap();
+                    }
                     f.write_all(&data).map_err(|e| e.to_string()).unwrap();
                 }
                 FilePath::Tmp { id } => {
@@ -165,6 +193,7 @@ impl Worker {
 
         // run
 
+        let wall_start = Instant::now();
         let mut proc = match cmd.spawn() {
             Ok(p) => p,
             Err(e) => {
@@ -197,6 +226,9 @@ impl Worker {
             }
         };
 
+        let wall_ms = wall_start.elapsed().as_secs_f64() * 1000.0;
+        histogram!("execution_wall_time_ms").record(wall_ms);
+
         let output_status = output.status.clone();
 
         let resource = match output.status.rusage {
@@ -228,7 +260,7 @@ impl Worker {
                 let data = match file.from {
                     FilePath::Stdout {} => output.stdout.clone(),
                     FilePath::Stderr {} => output.stderr.clone(),
-                    FilePath::Local { name } => {
+                    FilePath::Local { name, executable } => {
                         let full_path = format!("{}/{}", self.path, name);
                         let mut f = fs::File::open(&full_path).map_err(|e| ExecutionError {
                             message: format!("failed to open {}: {}", &full_path, e),
@@ -237,6 +269,18 @@ impl Worker {
                         f.read_to_end(&mut buffer)
                             .map_err(|e| e.to_string())
                             .unwrap();
+
+                        // if executable is true, set the executable bit
+                        if executable {
+                            let mut perms = fs::metadata(&full_path)
+                                .map_err(|e| e.to_string())
+                                .unwrap()
+                                .permissions();
+                            perms.set_mode(perms.mode() | 0o111); // set executable bits
+                            fs::set_permissions(&full_path, perms)
+                                .map_err(|e| e.to_string())
+                                .unwrap();
+                        }
                         buffer
                     }
                     _ => {
@@ -257,9 +301,21 @@ impl Worker {
                             .unwrap();
                     }
 
-                    FilePath::Local { name } => {
+                    FilePath::Local { name, executable } => {
                         let mut f = fs::File::create(&name).map_err(|e| e.to_string()).unwrap();
                         f.write_all(&data).map_err(|e| e.to_string()).unwrap();
+
+                        // if executable is true, set the executable bit
+                        if executable {
+                            let mut perms = fs::metadata(&name)
+                                .map_err(|e| e.to_string())
+                                .unwrap()
+                                .permissions();
+                            perms.set_mode(perms.mode() | 0o111); // set executable bits
+                            fs::set_permissions(&name, perms)
+                                .map_err(|e| e.to_string())
+                                .unwrap();
+                        }
                     }
 
                     _ => {
@@ -275,7 +331,7 @@ impl Worker {
         for file in execution.return_files {
             match file {
                 // match all possible file paths
-                FilePath::Local { name } => {
+                FilePath::Local { name, executable } => {
                     let full_path = format!("{}/{}", self.path, name);
                     let mut f = fs::File::open(&full_path)
                         .map_err(|e| e.to_string())
@@ -284,6 +340,18 @@ impl Worker {
                     f.read_to_end(&mut buffer)
                         .map_err(|e| e.to_string())
                         .unwrap();
+
+                    // if executable is true, set the executable bit
+                    if executable {
+                        let mut perms = fs::metadata(&full_path)
+                            .map_err(|e| e.to_string())
+                            .unwrap()
+                            .permissions();
+                        perms.set_mode(perms.mode() | 0o111); // set executable bits
+                        fs::set_permissions(&full_path, perms)
+                            .map_err(|e| e.to_string())
+                            .unwrap();
+                    }
 
                     return_files.push(ExecutionFile {
                         name,

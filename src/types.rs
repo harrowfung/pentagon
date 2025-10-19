@@ -12,7 +12,7 @@ pub enum File {
 #[serde(tag = "type")]
 #[serde(rename_all = "lowercase")]
 pub enum FilePath {
-    Local { name: String },
+    Local { name: String, executable: bool },
     Remote { id: String },
     Stdout {},
     Stderr {},
