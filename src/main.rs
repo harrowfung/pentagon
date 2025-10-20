@@ -147,6 +147,7 @@ async fn execute_code(
 }
 
 async fn metrics_endpoint(State(state): State<AppState>) -> impl IntoResponse {
+    state.prometheus_handle.run_upkeep();
     let body = state.prometheus_handle.render();
     let mut headers = HeaderMap::new();
     headers.insert(
