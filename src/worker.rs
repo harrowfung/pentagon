@@ -5,7 +5,8 @@ use std::collections::HashMap;
 use std::fs;
 use std::io::{Read, Write};
 
-use hakoniwa::seccomp::{Action, Arch, Filter};
+use hakoniwa::landlock::*;
+use hakoniwa::seccomp::{Action, Filter};
 use hakoniwa::{Container, Namespace, Rlimit, Runctl, Stdio};
 
 use crate::files::FileManager;
@@ -31,29 +32,32 @@ impl Worker {
         fs::create_dir_all(&code_path).expect("Failed to create code directory");
         let mut container = Container::new();
 
-        let mut filter = Filter::new(Action::Allow);
-
-        #[cfg(target_arch = "x86_64")]
-        {
-            filter.add_arch(Arch::X8664);
-            filter.add_arch(Arch::X86);
-            filter.add_arch(Arch::X32);
-        }
-
         container
             .unshare(Namespace::Cgroup)
             .unshare(Namespace::Ipc)
             .unshare(Namespace::Uts)
             .unshare(Namespace::Network);
 
+        let mut ruleset = Ruleset::default();
+
+        ruleset.restrict(Resource::FS, CompatMode::Enforce);
+        ruleset.add_fs_rule("/bin", FsAccess::R | FsAccess::X);
+        ruleset.add_fs_rule("/lib", FsAccess::R | FsAccess::X);
+        ruleset.add_fs_rule("/usr", FsAccess::R);
+        ruleset.add_fs_rule("/box", FsAccess::R | FsAccess::W | FsAccess::X);
+
+        container.landlock_ruleset(ruleset);
+
+        let mut filter = Filter::new(Action::Allow);
+
         BANNED_SYSCALLS.iter().for_each(|syscall| {
             filter.add_rule(Action::Errno(libc::SIGSYS), syscall);
         });
-
-        container.rootfs("/").expect("unable to mount root fs");
         container.seccomp_filter(filter);
 
+        container.rootfs("/").expect("unable to mount root fs");
         container.bindmount_rw(&code_path, "/box");
+
         container.runctl(Runctl::GetProcPidStatus);
         container.runctl(Runctl::GetProcPidSmapsRollup);
 
