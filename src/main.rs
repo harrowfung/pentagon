@@ -1,7 +1,7 @@
 use std::convert::Infallible;
 
 use crate::{
-    files::FileManager,
+    files::RedisFileManager,
     types::{ExecutionRequest, ExecutionResult},
     worker::Worker,
 };
@@ -66,7 +66,7 @@ async fn execute_code_inner(
 ) {
     let mut worker = Worker::new(
         format!("{}/{}", state.base_code_path, gen_random_id(10)),
-        Box::new(FileManager::new(state.redis_connection)),
+        Box::new(RedisFileManager::new(state.redis_connection)),
     );
 
     for file in payload.files {

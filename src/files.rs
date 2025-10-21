@@ -2,7 +2,7 @@ use crate::types::FilePath;
 use redis::{AsyncCommands, aio::MultiplexedConnection};
 use std::fs;
 
-pub struct FileManager {
+pub struct RedisFileManager {
     connection: MultiplexedConnection,
 }
 
@@ -21,7 +21,7 @@ pub trait FileManagerTrait {
     ) -> Result<Vec<u8>, String>;
 }
 
-impl FileManagerTrait for FileManager {
+impl FileManagerTrait for RedisFileManager {
     async fn save_file(
         &mut self,
         file_path: FilePath,
@@ -98,8 +98,8 @@ impl FileManagerTrait for FileManager {
     }
 }
 
-impl FileManager {
+impl RedisFileManager {
     pub fn new(connection: MultiplexedConnection) -> Self {
-        FileManager { connection }
+        RedisFileManager { connection }
     }
 }

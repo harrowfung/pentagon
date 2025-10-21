@@ -1,4 +1,4 @@
-use crate::files::FileManagerTrait;
+use crate::files::{FileManagerTrait, RedisFileManager};
 use std::os::unix::fs::PermissionsExt;
 
 use std::collections::HashMap;
@@ -9,7 +9,6 @@ use hakoniwa::landlock::*;
 use hakoniwa::seccomp::{Action, Filter};
 use hakoniwa::{Container, Namespace, Rlimit, Runctl, Stdio};
 
-use crate::files::FileManager;
 use metrics::histogram;
 use std::time::Instant;
 
@@ -19,7 +18,7 @@ pub struct Worker {
     container: Container,
     path: String,
     temp_files: HashMap<u64, Vec<u8>>,
-    file_manager: Box<FileManager>,
+    file_manager: Box<RedisFileManager>,
 }
 
 const BANNED_SYSCALLS: &[&str] = &[
@@ -28,7 +27,7 @@ const BANNED_SYSCALLS: &[&str] = &[
 ];
 
 impl Worker {
-    pub fn new(code_path: String, file_manager: Box<FileManager>) -> Self {
+    pub fn new(code_path: String, file_manager: Box<RedisFileManager>) -> Self {
         fs::create_dir_all(&code_path).expect("Failed to create code directory");
         let mut container = Container::new();
 
