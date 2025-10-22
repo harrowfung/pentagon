@@ -151,11 +151,13 @@ async fn handle_socket(mut socket: WebSocket, state: AppState) {
             }
         } else {
             // client disconnected
-            return;
+            break;
         };
 
         if socket.send(msg).await.is_err() {
             break;
         }
     }
+
+    worker.cleanup().await;
 }
