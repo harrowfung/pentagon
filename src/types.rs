@@ -1,4 +1,20 @@
+use metrics_exporter_prometheus::PrometheusHandle;
+use redis::aio::MultiplexedConnection;
 use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Default, Deserialize, PartialEq, Eq)]
+pub struct AppConfig {
+    pub redis_url: String,
+    pub base_code_path: String,
+    pub port: u16,
+}
+
+#[derive(Clone)]
+pub struct AppState {
+    pub redis_connection: MultiplexedConnection,
+    pub base_code_path: String,
+    pub prometheus_handle: PrometheusHandle,
+}
 
 #[derive(Serialize, Deserialize)]
 #[serde(tag = "type")]

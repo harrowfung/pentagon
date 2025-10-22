@@ -1,161 +1,25 @@
-use std::convert::Infallible;
+mod files;
+mod handlers;
+mod types;
+mod utils;
+mod worker;
 
 use crate::{
-    files::RedisFileManager,
-    types::{ExecutionRequest, ExecutionResult},
-    worker::Worker,
-};
-use async_stream::try_stream;
-use axum::http::{HeaderMap, HeaderValue, StatusCode, header::CONTENT_TYPE};
-use axum::response::IntoResponse;
-use axum::{
-    Json, Router,
-    extract::State,
-    response::{
-        Sse,
-        sse::{Event, KeepAlive},
+    handlers::{
+        metrics::metrics_endpoint,
+        run::{execute_code_endpoint, execute_code_ws_handler},
     },
-    routing::{get, post},
+    types::{AppConfig, AppState},
+};
+
+use axum::{
+    Router,
+    routing::{any, get, post},
 };
 use config::Config;
 use dotenvy::dotenv;
-use futures_util::stream::Stream;
-use metrics::{counter, describe_counter, describe_histogram, histogram};
-use metrics_exporter_prometheus::{PrometheusBuilder, PrometheusHandle};
-use redis::aio::MultiplexedConnection;
-use serde_json::json;
-use tokio::sync::mpsc::{self, Sender};
-
-mod files;
-mod types;
-mod worker;
-
-#[derive(Debug, Default, serde::Deserialize, PartialEq, Eq)]
-struct AppConfig {
-    redis_url: String,
-    base_code_path: String,
-    port: u16,
-}
-
-#[derive(Clone)]
-struct AppState {
-    redis_connection: MultiplexedConnection,
-    base_code_path: String,
-    prometheus_handle: PrometheusHandle,
-}
-
-fn gen_random_id(length: u32) -> String {
-    let id: String = Vec::from_iter(
-        (0..length)
-            .map(|_| {
-                let idx = fastrand::usize(0..36);
-                char::from_digit(idx as u32, 36).unwrap()
-            })
-            .collect::<Vec<char>>(),
-    )
-    .into_iter()
-    .collect();
-
-    id
-}
-
-async fn execute_code_inner(
-    state: AppState,
-    payload: ExecutionRequest,
-    tx: Sender<Result<ExecutionResult, String>>,
-) {
-    let mut worker = Worker::new(
-        format!("{}/{}", state.base_code_path, gen_random_id(10)),
-        Box::new(RedisFileManager::new(state.redis_connection)),
-    );
-
-    for file in payload.files {
-        if let Err(e) = worker.write_file(file).await {
-            tracing::error!("error writing file: {}", e);
-            counter!("executions_total", "outcome" => "error").increment(1);
-            worker.cleanup().await;
-
-            let _ = tx.send(Err(format!("failed to write file: {}", e))).await;
-            return;
-        }
-    }
-
-    for request in payload.executions {
-        let die_on_error = request.die_on_error;
-
-        let result = worker.execute(request).await;
-
-        if let Err(e) = &result {
-            tracing::error!("error executing code: {}", e.message);
-            counter!("executions_total", "outcome" => "error").increment(1);
-            worker.cleanup().await;
-
-            let _ = tx
-                .send(Err(format!("failed to execute code: {}", e.message)))
-                .await;
-            return;
-        }
-
-        let result = result.unwrap();
-        counter!("executions_total", "outcome" => "ok").increment(1);
-        histogram!("execution_time_ms").record(result.time_used as f64);
-        histogram!("execution_memory_kb").record(result.memory_used as f64);
-
-        let exit_code = result.exit_code;
-        let _ = tx.send(Ok(result)).await;
-
-        if die_on_error && exit_code != 0 {
-            break;
-        }
-    }
-
-    worker.cleanup().await;
-}
-
-async fn execute_code(
-    State(state): State<AppState>,
-    Json(payload): Json<ExecutionRequest>,
-) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
-    let (tx, mut rx) = mpsc::channel::<Result<ExecutionResult, String>>(100);
-    counter!("requests_total").increment(1);
-
-    tokio::spawn(async move {
-        let _ = execute_code_inner(state, payload, tx).await;
-    });
-
-    Sse::new(try_stream! {
-        loop {
-            match rx.recv().await {
-                Some(data) => {
-                    match data {
-                        Ok(json) => {
-                            yield Event::default().data(serde_json::to_string(&json).unwrap());
-                        },
-                        Err(err) => {
-                            tracing::error!("error executing code: {}", err);
-                            yield Event::default().data(json!({ "error": err }).to_string());
-                        }
-                    }
-                },
-                None => {
-                    break;
-                }
-            }
-        }
-    })
-    .keep_alive(KeepAlive::default())
-}
-
-async fn metrics_endpoint(State(state): State<AppState>) -> impl IntoResponse {
-    state.prometheus_handle.run_upkeep();
-    let body = state.prometheus_handle.render();
-    let mut headers = HeaderMap::new();
-    headers.insert(
-        CONTENT_TYPE,
-        HeaderValue::from_static("text/plain; version=0.0.4; charset=utf-8"),
-    );
-    (StatusCode::OK, headers, body)
-}
+use metrics::{describe_counter, describe_histogram};
+use metrics_exporter_prometheus::PrometheusBuilder;
 
 #[tokio::main]
 async fn main() {
@@ -183,7 +47,8 @@ async fn main() {
     let client = redis::Client::open(app_config.redis_url).unwrap();
     let con = client.get_multiplexed_async_connection().await.unwrap();
     let app = Router::new()
-        .route("/execute", post(execute_code))
+        .route("/execute", post(execute_code_endpoint))
+        .route("/execute", any(execute_code_ws_handler))
         .route("/metrics", get(metrics_endpoint))
         .with_state(AppState {
             redis_connection: con,
