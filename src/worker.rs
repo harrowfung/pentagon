@@ -125,6 +125,8 @@ impl Worker {
                     }
                     buffer
                 }
+
+                FilePath::Data { content } => content,
                 FilePath::Remote { id } => self
                     .file_manager
                     .get_file(FilePath::Remote { id }, None)

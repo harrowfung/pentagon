@@ -29,6 +29,7 @@ pub enum File {
 #[serde(rename_all = "lowercase")]
 pub enum FilePath {
     Local { name: String, executable: bool },
+    Data { content: Vec<u8> },
     Remote { id: String },
     Stdout {},
     Stderr {},
