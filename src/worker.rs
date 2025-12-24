@@ -42,7 +42,7 @@ impl Worker {
         ruleset.restrict(Resource::FS, CompatMode::Enforce);
         ruleset.add_fs_rule("/bin", FsAccess::R | FsAccess::X);
         ruleset.add_fs_rule("/lib", FsAccess::R | FsAccess::X);
-        ruleset.add_fs_rule("/usr", FsAccess::R);
+        ruleset.add_fs_rule("/usr", FsAccess::R | FsAccess::X);
         ruleset.add_fs_rule("/box", FsAccess::R | FsAccess::W | FsAccess::X);
 
         container.landlock_ruleset(ruleset);
