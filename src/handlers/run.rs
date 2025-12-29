@@ -96,6 +96,7 @@ pub async fn execute_code_endpoint(
 ) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
     let (tx, mut rx) = mpsc::channel::<Result<ExecutionResult, String>>(100);
     counter!("requests_total").increment(1);
+    tracing::info!("received execution request");
 
     tokio::spawn(async move {
         let _ = execute_code_inner(state, payload, tx).await;
@@ -132,6 +133,7 @@ pub async fn execute_code_ws_handler(
 }
 
 async fn handle_socket(mut socket: WebSocket, state: AppState) {
+    tracing::info!("websocket connection established for code execution");
     let mut worker = Worker::new(
         format!("{}/{}", state.base_code_path, gen_random_id(10)),
         Box::new(RedisFileManager::new(state.redis_connection)),
@@ -140,6 +142,10 @@ async fn handle_socket(mut socket: WebSocket, state: AppState) {
     while let Some(msg) = socket.recv().await {
         let msg = if let Ok(msg) = msg {
             let result = serde_json::from_str::<Execution>(msg.to_text().unwrap());
+            if result.is_err() {
+                tracing::error!("invalid execution request: {}", result.err().unwrap());
+                continue;
+            }
             let result = execute_execution(&mut worker, result.unwrap()).await;
 
             match result {
