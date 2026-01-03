@@ -80,3 +80,17 @@ pub struct ExecutionRequest {
     pub executions: Vec<Execution>,
     pub files: Vec<File>,
 }
+
+#[derive(Serialize, Deserialize)]
+#[serde(tag = "type")]
+#[serde(rename_all = "lowercase")]
+pub enum ExecutionMessage {
+    Batch {
+        id: String,
+        executions: Vec<Execution>,
+    },
+    Single {
+        id: String,
+        execution: Execution,
+    },
+}

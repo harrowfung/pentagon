@@ -32,7 +32,7 @@ impl FileManagerTrait for RedisFileManager {
             FilePath::Remote { id } => {
                 let _: () = self
                     .connection
-                    .set(id, content)
+                    .set_ex(id, content, 60 * 60 * 24 * 3)
                     .await
                     .map_err(|e| format!("Failed to save remote file: {}", e))?;
                 Ok(())

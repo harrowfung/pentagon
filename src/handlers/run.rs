@@ -22,7 +22,7 @@ use tokio::sync::mpsc::{self, Sender};
 
 use crate::{
     files::RedisFileManager,
-    types::{AppState, Execution, ExecutionRequest, ExecutionResult},
+    types::{AppState, Execution, ExecutionMessage, ExecutionRequest, ExecutionResult},
     utils::gen_random_id,
     worker::Worker,
 };
@@ -140,29 +140,72 @@ async fn handle_socket(mut socket: WebSocket, state: AppState) {
     );
 
     while let Some(msg) = socket.recv().await {
-        let msg = if let Ok(msg) = msg {
-            let result = serde_json::from_str::<Execution>(msg.to_text().unwrap());
+        if let Ok(msg) = msg {
+            let result = serde_json::from_str::<ExecutionMessage>(msg.to_text().unwrap());
             if result.is_err() {
                 tracing::error!("invalid execution request: {}", result.err().unwrap());
                 continue;
             }
-            let result = execute_execution(&mut worker, result.unwrap()).await;
+            let message = result.unwrap();
+            match message {
+                ExecutionMessage::Single { id: _, execution } => {
+                    let result = execute_execution(&mut worker, execution).await;
 
-            match result {
-                Ok(res) => Message::Text(Utf8Bytes::from(serde_json::to_string(&res).unwrap())),
-                Err(err) => {
-                    tracing::error!("error executing code: {}", err);
-                    Message::Text(Utf8Bytes::from(json!({ "error": err }).to_string()))
+                    let msg = match result {
+                        Ok(res) => {
+                            Message::Text(Utf8Bytes::from(serde_json::to_string(&res).unwrap()))
+                        }
+                        Err(err) => {
+                            tracing::error!("error executing code: {}", err);
+                            Message::Text(Utf8Bytes::from(json!({ "error": err }).to_string()))
+                        }
+                    };
+
+                    if socket.send(msg).await.is_err() {
+                        break;
+                    }
+                }
+
+                ExecutionMessage::Batch { id: _, executions } => {
+                    for execution in executions {
+                        let die_on_error = execution.die_on_error.clone();
+                        let result = execute_execution(&mut worker, execution).await;
+
+                        match result {
+                            Ok(res) => {
+                                if socket
+                                    .send(Message::Text(Utf8Bytes::from(
+                                        serde_json::to_string(&res).unwrap(),
+                                    )))
+                                    .await
+                                    .is_err()
+                                {
+                                    break;
+                                }
+                                if res.exit_code != 0 && die_on_error {
+                                    break;
+                                }
+                            }
+                            Err(err) => {
+                                tracing::error!("error executing code: {}", err);
+                                if socket
+                                    .send(Message::Text(Utf8Bytes::from(
+                                        json!({ "error": err }).to_string(),
+                                    )))
+                                    .await
+                                    .is_err()
+                                {
+                                    break;
+                                }
+                            }
+                        }
+                    }
                 }
             }
         } else {
-            // client disconnected
+            tracing::error!("error receiving websocket message");
             break;
         };
-
-        if socket.send(msg).await.is_err() {
-            break;
-        }
     }
 
     worker.cleanup().await;
