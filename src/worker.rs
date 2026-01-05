@@ -9,7 +9,7 @@ use hakoniwa::landlock::*;
 use hakoniwa::seccomp::{Action, Filter};
 use hakoniwa::{Container, Namespace, Rlimit, Runctl, Stdio};
 
-use metrics::histogram;
+use metrics::{counter, histogram};
 use std::time::Instant;
 
 use crate::types::{Execution, ExecutionError, ExecutionFile, ExecutionResult, File, FilePath};
@@ -95,6 +95,7 @@ impl Worker {
             }
         }
 
+        counter!("files_created_total").increment(1);
         Ok(())
     }
 
@@ -165,6 +166,7 @@ impl Worker {
                             .unwrap();
                     }
                     f.write_all(&data).map_err(|e| e.to_string()).unwrap();
+                    counter!("files_created_total").increment(1);
                 }
                 FilePath::Tmp { id } => {
                     self.store_temp_file(id, data);
@@ -319,6 +321,7 @@ impl Worker {
                     FilePath::Local { name, executable } => {
                         let mut f = fs::File::create(&name).map_err(|e| e.to_string()).unwrap();
                         f.write_all(&data).map_err(|e| e.to_string()).unwrap();
+                        counter!("files_created_total").increment(1);
 
                         // if executable is true, set the executable bit
                         if executable {

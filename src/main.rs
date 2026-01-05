@@ -1,5 +1,6 @@
 mod files;
 mod handlers;
+mod system_monitor;
 mod types;
 mod utils;
 mod worker;
@@ -18,7 +19,7 @@ use axum::{
 };
 use config::Config;
 use dotenvy::dotenv;
-use metrics::{describe_counter, describe_histogram};
+use metrics::{describe_counter, describe_gauge, describe_histogram};
 use metrics_exporter_prometheus::PrometheusBuilder;
 use tower_http::trace::{DefaultMakeSpan, DefaultOnResponse, TraceLayer};
 
@@ -45,7 +46,37 @@ async fn main() {
     describe_counter!("requests_total", "Total number of /execute requests");
     describe_counter!("executions_total", "Total number of executed programs");
     describe_histogram!("execution_time_ms", "Execution time in milliseconds");
+    describe_histogram!(
+        "execution_wall_time_ms",
+        "Wall execution time in milliseconds"
+    );
+    describe_histogram!(
+        "execution_total_duration_ms",
+        "Total execution duration including setup in milliseconds"
+    );
     describe_histogram!("execution_memory_kb", "Memory used in kilobytes");
+    describe_gauge!("active_workers", "Number of active workers");
+    describe_gauge!("active_executions", "Number of active executions running");
+    describe_gauge!(
+        "websocket_connections_active",
+        "Number of active websocket connections"
+    );
+    describe_counter!(
+        "websocket_messages_received_total",
+        "Total number of websocket messages received"
+    );
+    describe_counter!(
+        "websocket_messages_sent_total",
+        "Total number of websocket messages sent"
+    );
+    describe_counter!("files_created_total", "Total number of files created");
+    describe_gauge!("system_memory_used_bytes", "Used system memory in bytes");
+    describe_gauge!("system_memory_total_bytes", "Total system memory in bytes");
+    describe_gauge!("system_cpu_usage_percent", "System CPU usage in percent");
+    describe_gauge!("system_disk_free_bytes", "Free disk space in bytes");
+    describe_gauge!("system_disk_total_bytes", "Total disk space in bytes");
+
+    system_monitor::start_system_monitor().await;
 
     let client = redis::Client::open(app_config.redis_url).unwrap();
     let con = client.get_multiplexed_async_connection().await.unwrap();

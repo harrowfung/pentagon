@@ -15,9 +15,10 @@ use axum::{
     response::Response,
 };
 use futures_util::Stream;
-use metrics::{counter, histogram};
+use metrics::{counter, gauge, histogram};
 use serde_json::json;
 use std::convert::Infallible;
+use std::time::Instant;
 use tokio::sync::mpsc::{self, Sender};
 
 use crate::{
@@ -27,11 +28,29 @@ use crate::{
     worker::Worker,
 };
 
+struct GaugeGuard {
+    name: &'static str,
+}
+
+impl GaugeGuard {
+    fn new(name: &'static str) -> Self {
+        gauge!(name).increment(1.0);
+        Self { name }
+    }
+}
+
+impl Drop for GaugeGuard {
+    fn drop(&mut self) {
+        gauge!(self.name).decrement(1.0);
+    }
+}
+
 #[tracing::instrument(skip(worker), fields(program = %request.program))]
 async fn execute_execution(
     worker: &mut Worker,
     request: Execution,
 ) -> Result<ExecutionResult, String> {
+    let _guard = GaugeGuard::new("active_executions");
     tracing::debug!("starting execution");
     let result = worker.execute(request).await;
 
@@ -62,6 +81,8 @@ async fn execute_code_inner(
     payload: ExecutionRequest,
     tx: Sender<Result<ExecutionResult, String>>,
 ) {
+    let start = Instant::now();
+    let _guard = GaugeGuard::new("active_workers");
     tracing::info!("processing execution request");
     let mut worker = Worker::new(
         format!("{}/{}", state.base_code_path, gen_random_id(10)),
@@ -73,6 +94,7 @@ async fn execute_code_inner(
             tracing::error!("error writing file: {}", e);
             counter!("executions_total", "outcome" => "error").increment(1);
             worker.cleanup().await;
+            histogram!("execution_total_duration_ms").record(start.elapsed().as_millis() as f64);
 
             let _ = tx.send(Err(format!("failed to write file: {}", e))).await;
             return;
@@ -97,6 +119,7 @@ async fn execute_code_inner(
     }
 
     worker.cleanup().await;
+    histogram!("execution_total_duration_ms").record(start.elapsed().as_millis() as f64);
 }
 
 #[tracing::instrument(skip(state))]
@@ -144,6 +167,9 @@ pub async fn execute_code_ws_handler(
 
 #[tracing::instrument(skip(socket, state))]
 async fn handle_socket(mut socket: WebSocket, state: AppState) {
+    let _guard = GaugeGuard::new("websocket_connections_active");
+    let _worker_guard = GaugeGuard::new("active_workers");
+
     tracing::info!("websocket connection established for code execution");
     let mut worker = Worker::new(
         format!("{}/{}", state.base_code_path, gen_random_id(10)),
@@ -152,6 +178,8 @@ async fn handle_socket(mut socket: WebSocket, state: AppState) {
 
     while let Some(msg) = socket.recv().await {
         if let Ok(msg) = msg {
+            let start = Instant::now();
+            counter!("websocket_messages_received_total").increment(1);
             let result = serde_json::from_str::<ExecutionMessage>(msg.to_text().unwrap());
             if result.is_err() {
                 tracing::error!("invalid execution request: {}", result.err().unwrap());
@@ -176,6 +204,7 @@ async fn handle_socket(mut socket: WebSocket, state: AppState) {
                     if socket.send(msg).await.is_err() {
                         break;
                     }
+                    counter!("websocket_messages_sent_total").increment(1);
                 }
 
                 ExecutionMessage::Batch { id, executions } => {
@@ -195,6 +224,7 @@ async fn handle_socket(mut socket: WebSocket, state: AppState) {
                                 {
                                     break;
                                 }
+                                counter!("websocket_messages_sent_total").increment(1);
                                 if res.exit_code != 0 && die_on_error {
                                     break;
                                 }
@@ -210,11 +240,13 @@ async fn handle_socket(mut socket: WebSocket, state: AppState) {
                                 {
                                     break;
                                 }
+                                counter!("websocket_messages_sent_total").increment(1);
                             }
                         }
                     }
                 }
             }
+            histogram!("execution_total_duration_ms").record(start.elapsed().as_millis() as f64);
         } else {
             tracing::error!("error receiving websocket message: {}", msg.err().unwrap());
 
