@@ -16,7 +16,7 @@ pub struct AppState {
     pub prometheus_handle: PrometheusHandle,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Debug)]
 #[serde(tag = "type")]
 #[serde(rename_all = "lowercase")]
 pub enum File {
@@ -24,7 +24,7 @@ pub enum File {
     Remote { name: String, id: String },
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Debug)]
 #[serde(tag = "type")]
 #[serde(rename_all = "lowercase")]
 pub enum FilePath {
@@ -37,13 +37,13 @@ pub enum FilePath {
     Tmp { id: u64 },
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Debug)]
 pub struct ExecutionTransfer {
     pub from: FilePath,
     pub to: FilePath,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Debug)]
 pub struct Execution {
     pub program: String,                  // path to executable
     pub args: Vec<String>,                // command line arguments
@@ -75,13 +75,13 @@ pub struct ExecutionError {
     pub message: String,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Debug)]
 pub struct ExecutionRequest {
     pub executions: Vec<Execution>,
     pub files: Vec<File>,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Debug)]
 #[serde(tag = "type")]
 #[serde(rename_all = "lowercase")]
 pub enum ExecutionMessage {

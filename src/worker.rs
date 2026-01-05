@@ -27,7 +27,9 @@ const BANNED_SYSCALLS: &[&str] = &[
 ];
 
 impl Worker {
+    #[tracing::instrument(skip(file_manager))]
     pub fn new(code_path: String, file_manager: Box<RedisFileManager>) -> Self {
+        tracing::debug!("creating new worker");
         fs::create_dir_all(&code_path).expect("Failed to create code directory");
         let mut container = Container::new();
 
@@ -72,6 +74,7 @@ impl Worker {
         self.temp_files.insert(id, data);
     }
 
+    #[tracing::instrument(skip(self, file))]
     pub async fn write_file(&mut self, file: File) -> Result<(), String> {
         match file {
             File::Local { name, content } => {
@@ -95,6 +98,7 @@ impl Worker {
         Ok(())
     }
 
+    #[tracing::instrument(skip(self, execution), fields(program = %execution.program))]
     pub async fn execute(
         &mut self,
         execution: Execution,
@@ -144,7 +148,7 @@ impl Worker {
             match file.to {
                 FilePath::Local { name, executable } => {
                     let full_path = format!("{}/{}", self.path, name);
-                    println!("copying to {}", full_path);
+                    tracing::debug!("copying to {}", full_path);
                     let mut f = fs::File::create(&full_path)
                         .map_err(|e| e.to_string())
                         .unwrap();
@@ -213,7 +217,7 @@ impl Worker {
             if let Some(mut proc_stdin) = proc.stdin.take() {
                 if let Err(_) = proc_stdin.write_all(&stdin) {
                     // return RunOutput::error("Failed to write to stdin".to_string(), None, None);
-                    eprintln!("warning: failed to write to stdin, process could be dead");
+                    tracing::warn!("failed to write to stdin, process could be dead");
                 }
                 drop(proc_stdin);
             } else {
@@ -240,7 +244,7 @@ impl Worker {
         let resource = match output.status.rusage {
             Some(r) => Some(r),
             None => {
-                eprintln!("failed to get resource usage: {}", output_status.reason);
+                tracing::warn!("failed to get resource usage: {}", output_status.reason);
                 // return Err(ExecutionError {
                 //     message: "failed to get resource usage".to_string(),
                 // });
@@ -251,7 +255,7 @@ impl Worker {
         let proc_resource = match output.status.proc_pid_status {
             Some(r) => Some(r),
             None => {
-                eprintln!(
+                tracing::warn!(
                     "Failed to get process resource usage: {}",
                     output_status.reason
                 );
@@ -424,7 +428,9 @@ impl Worker {
         })
     }
 
+    #[tracing::instrument(skip(self))]
     pub async fn cleanup(&mut self) {
+        tracing::debug!("cleaning up worker");
         let _ = fs::remove_dir_all(&self.path);
     }
 }

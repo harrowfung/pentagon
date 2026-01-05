@@ -27,10 +27,12 @@ use crate::{
     worker::Worker,
 };
 
+#[tracing::instrument(skip(worker), fields(program = %request.program))]
 async fn execute_execution(
     worker: &mut Worker,
     request: Execution,
 ) -> Result<ExecutionResult, String> {
+    tracing::debug!("starting execution");
     let result = worker.execute(request).await;
 
     if let Err(e) = &result {
@@ -41,6 +43,12 @@ async fn execute_execution(
     }
 
     let result = result.unwrap();
+    tracing::debug!(
+        exit_code = result.exit_code,
+        time_used = result.time_used,
+        memory_used = result.memory_used,
+        "execution finished"
+    );
     counter!("executions_total", "outcome" => "ok").increment(1);
     histogram!("execution_time_ms").record(result.time_used as f64);
     histogram!("execution_memory_kb").record(result.memory_used as f64);
@@ -48,11 +56,13 @@ async fn execute_execution(
     Ok(result)
 }
 
+#[tracing::instrument(skip(state, tx), fields(files_count = payload.files.len(), executions_count = payload.executions.len()))]
 async fn execute_code_inner(
     state: AppState,
     payload: ExecutionRequest,
     tx: Sender<Result<ExecutionResult, String>>,
 ) {
+    tracing::info!("processing execution request");
     let mut worker = Worker::new(
         format!("{}/{}", state.base_code_path, gen_random_id(10)),
         Box::new(RedisFileManager::new(state.redis_connection)),
@@ -89,6 +99,7 @@ async fn execute_code_inner(
     worker.cleanup().await;
 }
 
+#[tracing::instrument(skip(state))]
 pub async fn execute_code_endpoint(
     State(state): State<AppState>,
     Json(payload): Json<ExecutionRequest>,
@@ -131,6 +142,7 @@ pub async fn execute_code_ws_handler(
     ws.on_upgrade(|ws| handle_socket(ws, state))
 }
 
+#[tracing::instrument(skip(socket, state))]
 async fn handle_socket(mut socket: WebSocket, state: AppState) {
     tracing::info!("websocket connection established for code execution");
     let mut worker = Worker::new(
@@ -147,7 +159,8 @@ async fn handle_socket(mut socket: WebSocket, state: AppState) {
             }
             let message = result.unwrap();
             match message {
-                ExecutionMessage::Single { id: _, execution } => {
+                ExecutionMessage::Single { id, execution } => {
+                    tracing::debug!(id = ?id, "processing single execution");
                     let result = execute_execution(&mut worker, execution).await;
 
                     let msg = match result {
@@ -165,7 +178,8 @@ async fn handle_socket(mut socket: WebSocket, state: AppState) {
                     }
                 }
 
-                ExecutionMessage::Batch { id: _, executions } => {
+                ExecutionMessage::Batch { id, executions } => {
+                    tracing::debug!(id = ?id, count = executions.len(), "processing batch execution");
                     for execution in executions {
                         let die_on_error = execution.die_on_error.clone();
                         let result = execute_execution(&mut worker, execution).await;

@@ -20,10 +20,13 @@ use config::Config;
 use dotenvy::dotenv;
 use metrics::{describe_counter, describe_histogram};
 use metrics_exporter_prometheus::PrometheusBuilder;
+use tower_http::trace::{DefaultMakeSpan, DefaultOnResponse, TraceLayer};
 
 #[tokio::main]
 async fn main() {
-    tracing_subscriber::fmt::init();
+    tracing_subscriber::fmt()
+        .with_max_level(tracing::Level::INFO)
+        .init();
 
     dotenv().ok();
     let settings = Config::builder()
@@ -50,6 +53,11 @@ async fn main() {
         .route("/execute", post(execute_code_endpoint))
         .route("/execute", any(execute_code_ws_handler))
         .route("/metrics", get(metrics_endpoint))
+        .layer(
+            TraceLayer::new_for_http()
+                .make_span_with(DefaultMakeSpan::new().level(tracing::Level::INFO))
+                .on_response(DefaultOnResponse::new().level(tracing::Level::INFO)),
+        )
         .with_state(AppState {
             redis_connection: con,
             base_code_path: app_config.base_code_path.clone(),
