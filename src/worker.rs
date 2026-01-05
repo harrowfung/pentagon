@@ -144,6 +144,7 @@ impl Worker {
             match file.to {
                 FilePath::Local { name, executable } => {
                     let full_path = format!("{}/{}", self.path, name);
+                    println!("copying to {}", full_path);
                     let mut f = fs::File::create(&full_path)
                         .map_err(|e| e.to_string())
                         .unwrap();
@@ -237,25 +238,24 @@ impl Worker {
         let output_status = output.status.clone();
 
         let resource = match output.status.rusage {
-            Some(r) => r,
+            Some(r) => Some(r),
             None => {
                 eprintln!("failed to get resource usage: {}", output_status.reason);
-                return Err(ExecutionError {
-                    message: "failed to get resource usage".to_string(),
-                });
+                // return Err(ExecutionError {
+                //     message: "failed to get resource usage".to_string(),
+                // });
+                None
             }
         };
 
         let proc_resource = match output.status.proc_pid_status {
-            Some(r) => r,
+            Some(r) => Some(r),
             None => {
                 eprintln!(
                     "Failed to get process resource usage: {}",
                     output_status.reason
                 );
-                return Err(ExecutionError {
-                    message: "failed to get process resource usage".to_string(),
-                });
+                None
             }
         };
 
@@ -407,10 +407,19 @@ impl Worker {
             }
         }
 
+        let memory_used = match proc_resource {
+            Some(res) => res.vmrss as u64,
+            None => 0,
+        };
+        let time_used = match resource {
+            Some(res) => res.user_time.as_millis() + res.system_time.as_millis(),
+            None => 0,
+        };
+
         Ok(ExecutionResult {
             exit_code: output.status.code,
-            time_used: resource.user_time.as_millis() + resource.system_time.as_millis(),
-            memory_used: proc_resource.vmrss as u64,
+            time_used,
+            memory_used,
             return_files,
         })
     }

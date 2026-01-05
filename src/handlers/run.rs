@@ -36,7 +36,6 @@ async fn execute_execution(
     if let Err(e) = &result {
         tracing::error!("error executing code: {}", e.message);
         counter!("executions_total", "outcome" => "error").increment(1);
-        worker.cleanup().await;
 
         return Err(format!("failed to execute code: {}", e.message));
     }
@@ -203,7 +202,8 @@ async fn handle_socket(mut socket: WebSocket, state: AppState) {
                 }
             }
         } else {
-            tracing::error!("error receiving websocket message");
+            tracing::error!("error receiving websocket message: {}", msg.err().unwrap());
+
             break;
         };
     }
