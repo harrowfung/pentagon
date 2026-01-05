@@ -191,6 +191,12 @@ impl Worker {
             execution.memory_limit as u64,
         );
 
+        self.container.setrlimit(
+            Rlimit::Stack,
+            execution.memory_limit as u64,
+            execution.memory_limit as u64,
+        );
+
         let mut cmd = self.container.command(&execution.program);
         cmd.current_dir("/box")
             .args(execution.args)
