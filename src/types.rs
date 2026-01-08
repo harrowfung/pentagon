@@ -31,8 +31,12 @@ pub enum FilePath {
     Local { name: String, executable: bool },
     Data { content: Vec<u8> },
     Remote { id: String },
-    Stdout {},
-    Stderr {},
+    Stdout {
+        max_size: Option<u64>,
+    },
+    Stderr {
+        max_size: Option<u64>,
+    },
     Stdin {},
     Tmp { id: u64 },
 }

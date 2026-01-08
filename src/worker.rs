@@ -275,8 +275,30 @@ impl Worker {
             // only copy out files when process is successful
             for file in execution.copy_out {
                 let data = match file.from {
-                    FilePath::Stdout {} => output.stdout.clone(),
-                    FilePath::Stderr {} => output.stderr.clone(),
+                    FilePath::Stdout { max_size } => {
+                        match max_size {
+                            Some(size) => {
+                                if output.stdout.len() > size as usize {
+                                    output.stdout[..size as usize].to_vec()
+                                } else {
+                                    output.stdout.clone()
+                                }
+                            }
+                            None => output.stdout.clone()
+                        }
+                    },
+                    FilePath::Stderr { max_size } => {
+                        match max_size {
+                            Some(size) => {
+                                if output.stderr.len() > size as usize {
+                                    output.stderr[..size as usize].to_vec()
+                                } else {
+                                    output.stderr.clone()
+                                }
+                            }
+                            None => output.stderr.clone()
+                        }
+                    },
                     FilePath::Local { name, executable } => {
                         let full_path = format!("{}/{}", self.path, name);
                         let mut f = fs::File::open(&full_path).map_err(|e| ExecutionError {
@@ -390,18 +412,54 @@ impl Worker {
                     });
                 }
 
-                FilePath::Stderr {} => {
-                    return_files.push(ExecutionFile {
-                        name: "stderr".to_string(),
-                        content: output.stderr.clone(),
-                    });
+                FilePath::Stderr {
+                    max_size,
+                } => {
+                    match max_size {
+                        Some(size) => {
+                            if output.stderr.len() > size as usize {
+                                return_files.push(ExecutionFile {
+                                    name: "stderr".to_string(),
+                                    content: output.stderr[..size as usize].to_vec(),
+                                });
+                            } else {
+                                return_files.push(ExecutionFile {
+                                    name: "stderr".to_string(),
+                                    content: output.stderr.clone(),
+                                });
+                            }
+                        }
+                        None => {
+                            return_files.push(ExecutionFile {
+                                name: "stderr".to_string(),
+                                content: output.stderr.clone(),
+                            });
+                        }
+                    }
                 }
 
-                FilePath::Stdout {} => {
-                    return_files.push(ExecutionFile {
-                        name: "stdout".to_string(),
-                        content: output.stdout.clone(),
-                    });
+                FilePath::Stdout { max_size } => {
+                    match max_size {
+                        Some(size) => {
+                            if output.stdout.len() > size as usize {
+                                return_files.push(ExecutionFile {
+                                    name: "stdout".to_string(),
+                                    content: output.stdout[..size as usize].to_vec(),
+                                });
+                            } else {
+                                return_files.push(ExecutionFile {
+                                    name: "stdout".to_string(),
+                                    content: output.stdout.clone(),
+                                });
+                            }
+                        }
+                        None => {
+                            return_files.push(ExecutionFile {
+                                name: "stdout".to_string(),
+                                content: output.stdout.clone(),
+                            });
+                        }
+                    }
                 }
 
                 FilePath::Tmp { id } => {
