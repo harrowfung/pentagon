@@ -137,7 +137,13 @@ impl Worker {
                     .get_file(FilePath::Remote { id }, None)
                     .await
                     .unwrap(),
-                FilePath::Tmp { id } => self.temp_files.get(&id).unwrap().clone(),
+                FilePath::Tmp { id } => {
+                    if !self.temp_files.contains_key(&id) {
+                        Vec::new()
+                    } else {
+                        self.temp_files.get(&id).unwrap().clone()
+                    }
+                },
 
                 _ => {
                     return Err(ExecutionError {
@@ -301,26 +307,39 @@ impl Worker {
                     },
                     FilePath::Local { name, executable } => {
                         let full_path = format!("{}/{}", self.path, name);
-                        let mut f = fs::File::open(&full_path).map_err(|e| ExecutionError {
-                            message: format!("failed to open {}: {}", &full_path, e),
-                        })?;
+                        let mut f = fs::File::open(&full_path);
                         let mut buffer = Vec::new();
-                        f.read_to_end(&mut buffer)
-                            .map_err(|e| e.to_string())
-                            .unwrap();
+                        match f {
+                            Ok(mut file) => {
+                                file.read_to_end(&mut buffer)
+                                    .map_err(|e| e.to_string())
+                                    .unwrap();
 
-                        // if executable is true, set the executable bit
-                        if executable {
-                            let mut perms = fs::metadata(&full_path)
-                                .map_err(|e| e.to_string())
-                                .unwrap()
-                                .permissions();
-                            perms.set_mode(perms.mode() | 0o111); // set executable bits
-                            fs::set_permissions(&full_path, perms)
-                                .map_err(|e| e.to_string())
-                                .unwrap();
+                                // if executable is true, set the executable bit
+                                if executable {
+                                    let mut perms = fs::metadata(&full_path)
+                                        .map_err(|e| e.to_string())
+                                        .unwrap()
+                                        .permissions();
+                                    perms.set_mode(perms.mode() | 0o111); // set executable bits
+                                    fs::set_permissions(&full_path, perms)
+                                        .map_err(|e| e.to_string())
+                                        .unwrap();
+                                }
+                                buffer
+                            }
+                            Err(e) => {
+                                if executable {
+                                    return Err(ExecutionError {
+                                        message: format!(
+                                            "failed to open file {} for copy_out: {}",
+                                            full_path, e
+                                        ),
+                                    });
+                                }
+                                Vec::new()
+                            }
                         }
-                        buffer
                     }
                     _ => {
                         return Err(ExecutionError {
