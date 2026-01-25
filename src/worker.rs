@@ -230,11 +230,13 @@ impl Worker {
 
         if let Some(stdin) = stdin {
             if let Some(mut proc_stdin) = proc.stdin.take() {
-                if let Err(_) = proc_stdin.write_all(&stdin) {
-                    // return RunOutput::error("Failed to write to stdin".to_string(), None, None);
-                    tracing::warn!("failed to write to stdin, process could be dead");
-                }
-                drop(proc_stdin);
+                std::thread::spawn(move || {
+                    if let Err(_) = proc_stdin.write_all(&stdin) {
+                        // return RunOutput::error("Failed to write to stdin".to_string(), None, None);
+                        tracing::warn!("failed to write to stdin, process could be dead");
+                    }
+                    drop(proc_stdin);
+                });
             } else {
                 return Err(ExecutionError {
                     message: "Failed to open stdin of process".to_string(),
