@@ -1,4 +1,4 @@
-use metrics::{describe_gauge, gauge};
+use metrics::gauge;
 use std::time::Duration;
 use sysinfo::{Disks, System};
 use tokio::time;

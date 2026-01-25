@@ -58,6 +58,7 @@ pub struct Execution {
     pub copy_in: Vec<ExecutionTransfer>,  // list of files to copy in
     pub return_files: Vec<FilePath>,      // list of files to return
     pub die_on_error: bool,               // whether to stop execution on first error
+    pub autofix: Option<bool>             // whether to fix stdout/stderr truncation automatically, i.e add new line if not present, trim trailing spaces
 }
 
 #[derive(Serialize, Deserialize, Debug)]

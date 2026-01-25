@@ -1,4 +1,5 @@
 use crate::files::{FileManagerTrait, RedisFileManager};
+use crate::utils::autofix;
 use std::os::unix::fs::PermissionsExt;
 
 use std::collections::HashMap;
@@ -277,6 +278,12 @@ impl Worker {
             }
         };
 
+        let stdout = if execution.autofix.unwrap_or(true) {
+            autofix(output.stdout.clone())
+        } else {
+            output.stdout.clone()
+        };
+
         if output.status.exit_code.unwrap_or(0) == 0 {
             // only copy out files when process is successful
             for file in execution.copy_out {
@@ -284,13 +291,13 @@ impl Worker {
                     FilePath::Stdout { max_size } => {
                         match max_size {
                             Some(size) => {
-                                if output.stdout.len() > size as usize {
-                                    output.stdout[..size as usize].to_vec()
+                                if stdout.len() > size as usize {
+                                    stdout[..size as usize].to_vec()
                                 } else {
-                                    output.stdout.clone()
+                                    stdout.clone()
                                 }
                             }
-                            None => output.stdout.clone()
+                            None => stdout.clone()
                         }
                     },
                     FilePath::Stderr { max_size } => {
@@ -307,7 +314,7 @@ impl Worker {
                     },
                     FilePath::Local { name, executable } => {
                         let full_path = format!("{}/{}", self.path, name);
-                        let mut f = fs::File::open(&full_path);
+                        let f = fs::File::open(&full_path);
                         let mut buffer = Vec::new();
                         match f {
                             Ok(mut file) => {
@@ -460,22 +467,22 @@ impl Worker {
                 FilePath::Stdout { max_size } => {
                     match max_size {
                         Some(size) => {
-                            if output.stdout.len() > size as usize {
+                            if stdout.len() > size as usize {
                                 return_files.push(ExecutionFile {
                                     name: "stdout".to_string(),
-                                    content: output.stdout[..size as usize].to_vec(),
+                                    content: stdout[..size as usize].to_vec(),
                                 });
                             } else {
                                 return_files.push(ExecutionFile {
                                     name: "stdout".to_string(),
-                                    content: output.stdout.clone(),
+                                    content: stdout.clone(),
                                 });
                             }
                         }
                         None => {
                             return_files.push(ExecutionFile {
                                 name: "stdout".to_string(),
-                                content: output.stdout.clone(),
+                                content: stdout.clone(),
                             });
                         }
                     }
